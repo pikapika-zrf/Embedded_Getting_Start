@@ -18,7 +18,7 @@ ST官网https://www.st.com/
 
 ## 一、简介
 
-### 1.1 命名
+### 1.1 STM32系列芯片命名
 
 ARM11之后改用Cortex命名，分为三个系列
 
@@ -28,7 +28,7 @@ ARM11之后改用Cortex命名，分为三个系列
 
 <img src="https://raw.githubusercontent.com/pikapika-zrf/BlogImg/master/img/202306092238624.png" style="zoom: 50%;" />
 
-Tips：
+tips：
 
 1. STM32选型，由高到低，由大到下。H7->F4->F1(代码优化)
 2. 数据手册获取:[ST官网](https://www.st.com/)和[ST中文社区网](https://www.stmcu.org.cn/)
@@ -53,11 +53,14 @@ Tips：
 
 保证MCU正常工作的最小电路组成单元。
 
-STM32芯片、电源电路、晶振电路、复位电路、BOOT启动电路、下载调试端电路。
+1. STM32芯片
+2. 电源电路。VSS/VDD等。**参考手册4.1**
+3. 复位电路。NRST。**参考手册6.1.2**
+4. 晶振电路。OSC_IN/OSC_OUT等。**参考手册7.2.1、7.2.4**
+5. BOOT启动电路。BOOT0/BOOT1。**参考手册2.4**
+6. 下载调试端电路。推荐（SW接口）SWDIO/SWCLK。**参考手册29.3**
 
-![image-20230614113013604](https://raw.githubusercontent.com/pikapika-zrf/BlogImg/master/img/202306141130747.png)
-
-### 1.4 单片机程序烧录方式
+### 1.4 程序烧录
 
 - ISP（In-System Programming）
   在系统编程，使用引导程序（Bootloader）加上外围**UART/SPI等接口**进行烧录。
@@ -70,85 +73,43 @@ STM32芯片、电源电路、晶振电路、复位电路、BOOT启动电路、�
 >
 > 通常，我们编写的代码，是放到**主存储器**的起始位置（0x0800 0000）开始运行的，烧录程序时，直接将程序烧录到这里即可。
 
-**启动方式选择，参考手册2.4节**
-
-![image-20230614144553455](https://raw.githubusercontent.com/pikapika-zrf/BlogImg/master/img/202306141445542.png)
-
-- BOOT0=0, BOOT1任意
-
-在主存储区运行程序，BOOT0引脚拉低即可。
-
-- BOOT0=1,BOOT1=0
-
-用于串口方式烧录。单片机从系统存储器启动，运行BootLoader程序，接收串口发来的程序，并将其写入主存储器。程序烧录完成后，再将BOOT0引脚拉低，主存储器处运行刚烧录的代码。
-
-- BOOT0=1,BOOT1=1
-
-从内存中启动，内置SRAM，既然是SRAM，自然也就没有程序存储的能力了，一般用于程序调试。
-
 ### 1.5 下载接口
 
-方式：JTAG、SWD、串口。建议使用SWD，占用IO少并且可以调试。
+SWD方式与STM32单片机连接，**ST-Link与STM32接线：**
 
-![image-20230614110346102](https://raw.githubusercontent.com/pikapika-zrf/BlogImg/master/img/202306141107599.png)
+​	3.3V-VDD / GND-VSS / SWCLK-SWCLK / SWDIO-SWDIO
 
-1. ST-Link下载调试器
+MDK工程中魔术棒Debug选项卡选择调试器并设置settings。
 
-一端为USB接口（与电脑连接）。另一端如采用SWD方式与STM32单片机连接，只需要使用其中4针（3.3V、GND、SWCLK、SWDIO）。
+​								Utilities选项卡选择use Debug Driver。
 
-**ST-Link与STM32接线：**
+tips：
 
-​	3.3V-VDD
-
-​	GND-VSS
-
-​	SWCLK-SWCLK
-
-​	SWDIO-SWDIO
-
-<img src="https://raw.githubusercontent.com/pikapika-zrf/BlogImg/master/img/202306141544675.png" alt="image-20230614154426547" style="zoom:50%;" />
-
-![image-20230614154458449](https://raw.githubusercontent.com/pikapika-zrf/BlogImg/master/img/202306141544520.png)
-
-### 1.6 JTAG/SWD调试
-
-Cortex-M内核含有硬件调试模块，该模块可在取指(指令断点)或访问数据(数据断点)时停止。内核停止时，可以查询内核的内部状态和系统的外部状态。完成查询后，可恢复程序执行。
-
-见参考手册29.4
-
-![image-20230614153216071](https://raw.githubusercontent.com/pikapika-zrf/BlogImg/master/img/202306141542414.png)
-
-F1系列可以用复用重映射和调试I/O配置寄存器(AFIO_MAPR)寄存器(见8.4.2节)来选择引脚功能。  
-
-F4/F6/H7默认SWJ-DP引脚为复用功能
-
-<img src="https://raw.githubusercontent.com/pikapika-zrf/BlogImg/master/img/202306141602179.png" alt="image-20230614160251013" style="zoom: 33%;" />
+1. 结束仿真报错解决方法：
+   1. 仿真结束前将所有断点清除
+   2. 将工程路径改浅，或全改为英文路径
 
 ## 二、STM32系统框架
 
 ### 2.1 F1系统架构
 
-1. 4个主动单元与4个被动单元。见参考手册2.1
+1. 4个主动单元与4个被动单元。**见参考手册2.1。**
 
-<img src="https://raw.githubusercontent.com/pikapika-zrf/BlogImg/master/img/202306142248831.png" alt="image-20230614224836680" style="zoom:33%;" />
+   ​	D-bus S-bus DMA1 DMA2
 
-见数据手册（3 引脚定义附近）
+   ​	SRAM FLASH FSMC AHB\APB
 
-<img src="https://raw.githubusercontent.com/pikapika-zrf/BlogImg/master/img/202306142252801.png" alt="image-20230614225129156" style="zoom:50%;" />
+   模块框图**见数据手册**（3 引脚定义附近）
 
 2. 总线时钟频率：
 
-AHB：72MHz(Max)
+   AHB：72MHz(Max)
 
-APB1：36MHz(Max)
-
-APB2：72MHz(Max)
+   APB1：36MHz(Max)	APB2：72MHz(Max)
 
 ### 2.2 存储器映射
 
-存储器（FLASH,SRAM）本身没有地址信息，对存储器分配地址的过程称为存储器映射。
-
-![image-20230615194651882](https://raw.githubusercontent.com/pikapika-zrf/BlogImg/master/img/202306151946756.png)
+存储器（FLASH,SRAM）本身没有地址信息，对存储器分配地址的过程称为存储器映射。**见数据手册4。**
 
 存储器由程序存储器、数据存储器和寄存器组成。
 
@@ -204,25 +165,21 @@ stm32f103xe.h主要组成部分。
 
 ### 2.4 HAL库
 
-- CMSIS：微控制器软件接口标准
+STM32单片机编程主要有寄存器方式和库函数（固件库）方式。
 
-- 用户层（用户代码）->中间层（CMSIS）->硬件库
+寄存器方式：直接操作单片机内部硬件的寄存器。生成的程序代码量少，要求对硬件和相关寄存器很熟悉，开发难度大，维护调试比较繁琐。
 
-- ST为开发STM32提供三种库:
+库函数方式：通过调取固件库中不同功能的函数，让函数来操作单片机内部的寄存器。不要求用户很熟悉单片机内部硬件，开发难度小，维护调试比较容易，但生成的程序代码量大。
 
-1. 标准外设库
-2. HAL库（硬件抽象层）
-3. LL库
+[ST官网](https://www.st.com/)搜索STM32Cube下载固件库。
 
-直接操作寄存器。执行效率高、时间成本高。
 
-标准库。停止维护。
 
-HAL库。全系列兼容，ST主推的库，兼容性、易移植性、效率低。
+**tips：**
 
-LL库。全系列兼容、与HAL库捆绑发布、轻量级、效率高、不匹配部分复杂外设。
-
-**Tips：**HAL库回调函数通常被**_weak修饰**（弱函数），允许用户重新定义该函数。
+1. HAL库回调函数通常被**_weak修饰**（弱函数），允许用户重新定义该函数。
+2. LL库。全系列兼容、与HAL库捆绑发布、轻量级、效率高、不匹配部分复杂外设。
+3. CMSIS：微控制器软件接口标准。用户层（用户代码）->中间层（CMSIS）->硬件库
 
 **如何使用HAL库**
 
@@ -245,8 +202,6 @@ LL库。全系列兼容、与HAL库捆绑发布、轻量级、效率高、不匹
    `main.c`,`stm32f1xx_it.c`,`stm32f1xx_it.h`,`stm32f1xx_hal_conf.h`
    不是必须：`main.h`,`stm32f1xx_hal_msp.c`
 
-<img src="https://raw.githubusercontent.com/pikapika-zrf/BlogImg/master/img/202306192203548.png" alt="image-20230619220342802" style="zoom:33%;" />
-
 HAL库的用户配置文件`stm32f1xx_hal_conf.h`
 
 1. 裁剪HAL库外设驱动源码
@@ -254,6 +209,21 @@ HAL库的用户配置文件`stm32f1xx_hal_conf.h`
    注释掉不需要的宏定义
 
 2. 设置外部低速和高速晶振
+
+重要文件说明
+
+| 文件名                                       | 功能描述           | 具体说明                                                     |
+| -------------------------------------------- | ------------------ | ------------------------------------------------------------ |
+| core_cm3.h                                   | 内核及设备文件     | 访问内核及其设备（NVIC、Systics等），以及CPU寄存器和内核外设的函数。<br />在Drivers\CMSIS\Core\Include下。 |
+| system_stm32f1xx.h<br />system_stm32f1xx.c   | MCU专用系统文件    | 包含时钟的相关函数。有SystemInit()函数声明，该函数在系统启动时会调用，用来设置整个系统和总线的时钟。<br />在Drivers\CMSIS\Device\ST\STM32F1xx\Include下。 |
+| stm32f103xe.h                                | 微控制器专用头文件 | 外设寄存器的定义（寄存器基地址等）、位定义、中断向量表、存储空间的地址映射。<br />在Drivers\CMSIS\Device\ST\STM32F1xx\Include下。 |
+| startup_stm32f103xe.s                        | 编译器启动代码     | 1.初始化堆栈指针SP。2.初始化程序计数器指针PC。3.设置堆栈大小。4.设置中断向量表入口地址。5.配置外部SRAM为数据存储器。6.调用SystemInit()函数配置STM32的系统时钟。7.设置C库的分支入口“__main”调用执行main函数。<br />在Drivers\CMSIS\Device\ST\STM32F1xx\Source\Templates\arm下。 |
+| stm32f1xx_hal_conf.h                         | 固件库配置文件     | 通过更改包含的外设头文件来选择固件库所使用的外设，在新建程序和进行功能变更之前应当首先修改对应的配置。使用相应外设时应调用相关头文件，不使用则注释。<br />在Projects\STM3210E_EVAL\Templates\Inc下。 |
+| stm32f1xx_it.h<br />stm32f1xx_it.c           | 外设中断函数文件   | 用户可以加入自己的中断程序代码。一般不用改动。<br />在Projects\STM3210E_EVAL\Templates\Inc下 |
+| stm32f1xx_hal_ppp.h<br />stm32f1xx_hal_ppp.c | 外设驱动文件       | 包括相关外设初始化配置和部分功能应用函数。<br />在Drivers\STM32F1xx_HAL_Driver\Inc下 |
+| Application.c                                | 用户程序文件       | 常用main.c。                                                 |
+
+
 
 ### 2.5 MAP文件
 
@@ -328,11 +298,7 @@ HAL库的用户配置文件`stm32f1xx_hal_conf.h`
 
 见参考手册 8.2
 
-![image-20230622133039158](https://raw.githubusercontent.com/pikapika-zrf/BlogImg/master/img/202306221330221.png)
-
-
-
-
+GPIOx_CRL、GPIOx_CRH、GPIOx_IDR、GPIOx_ODR、GPIOx_BSRR、GPIOx_BRR、GPIOx_LCKR
 
 
 
