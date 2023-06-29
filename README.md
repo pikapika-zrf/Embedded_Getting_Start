@@ -270,11 +270,9 @@ HAL库的用户配置文件`stm32f1xx_hal_conf.h`
 
 系统滴答定时器，包含在M3/4/7内核里，核心是一个24位的递减计数器。
 
-**delay**
-
-**printf**
-
 ### 3.2 GPIO
+
+通用输入输出端口。
 
 **特点**
 
@@ -294,19 +292,256 @@ HAL库的用户配置文件`stm32f1xx_hal_conf.h`
 
 **8种工作模式**
 
+输入浮空、输入上拉、输入下拉、模拟功能
+
+开漏输出、推挽输出、开漏复用输出、推挽复用输出
+
 **寄存器**
 
 见参考手册 8.2
 
+F1:
+
 GPIOx_CRL、GPIOx_CRH、GPIOx_IDR、GPIOx_ODR、GPIOx_BSRR、GPIOx_BRR、GPIOx_LCKR
 
+**通用外设驱动模式：**
+
+1. 初始化。时钟设置、参数设置、IO设置、中断设置。
+2. 读函数（可选）。
+3. 写函数（可选）。
+4. 中断服务函数（可选）。
+
+**GPIO配置步骤：**
+
+1. 使能时钟   __HAL_RCC_GPIOx_CLK_ENABLE()
+
+2. 设置工作模式   HAL_GPIO_Init()
+3. 设置输出状态（可选）HAL_GPIO_WritePin()、HAL_GPIO_TogglePin()
+4. 读取输入状态（可选）HAL_GPIO_ReadPin()
+
+tips：
+
+1. F1和F4/F7/H7 内部上/下拉放的位置不同。
+2. 施密特触发器，把非标准方波整形成方波
+3. F1在输出模式，禁止使用内部上下拉
+4. ODR和BSRR。建议使用BSRR控制输出
+
+### 3.3 中断
+
+打断CPU执行正常的程序，转而执行处理紧急程序，然后返回原暂停的程序继续运行。
+
+**作用和意义**
+
+实时控制、故障处理、数据传输
+
+高效处理紧急程序，不会一直占用CPU资源。
+
+流程：GPIO->AFIO(F1)/SYSCFG(F4)->EXTI->NVIC->CPU
+
+#### **3.3.1 NVIC**
+
+嵌套向量中断控制器，属于内核。
+
+支持256个中断（16内核+240外部），支持：256个优先级，允许裁剪。ST只使用16个中断优先级
+
+**中断向量表**
+
+定义一块固定的内存，4字节对齐，存放各个中断服务函数程序的首地址。
+
+中断向量表定义在启动文件。**见参考手册9**
+
+**寄存器**
+
+中断使能寄存器ISER、中断失能寄存器ICER、应用程序中断及复位控制寄存器AIRCR、中断优先级寄存器IPR（STM32只使用高4位）
+
+ISER/ICER（中断使能/失能）->IPR（优先级）->AIRCR（控制分组）
+
+**中断优先级**
+
+1. 抢占优先级，高抢占优先级可以打断低抢占优先级
+2. 响应优先级，抢占优先级相同时，响应优先级高的先执行，但是不能互相打断
+3. 自然优先级，抢占和响应优先级都相同的情况下，自然优先级高的先执行
+4. 数值越小，表示优先级越高
+
+**STM32优先级分组**
+
+![image-20230628230040382](https://raw.githubusercontent.com/pikapika-zrf/BlogImg/master/img/202306282300778.png)
+
+一个工程中一般只设置一次中断优先级分组
+
+**见编程手册4.4.5**，自然优先级**见参考手册9.1.2**
+
+**NVIC的使用**
+
+1. 设置中断分组。AIRCR[10:8],HAL_NVIC_SetPriorityGrouping
+2. 设置中断优先级。IPRx,bit[7:4],HAL_NVIC_SetPriority
+3. 使能中断。ISER,HAL_NVIC_EnableIRQ
+
+#### **3.3.2 EXTI**
+
+外部（扩展）中断事件控制器。**见参考参考手册9.2**
+
+包含20个产生事件/中断请求的边沿检测器，F1总共20条EXTI线。
+
+**中断和事件**
+
+中断：要进入NVIC，有相应的中断服务函数，需要CPU处理
+
+事件：不进入NVIC，仅用于内部硬件自动控制，如：TIM、DMA、ADC
+
+**特性**
+
+F1/F4/F7：
+
+每条EXTI都可以单独配置：选择类型（中断或者事件）、触发方式（上升下降沿）、支持软件触发、开启/屏蔽、有挂起状态
+
+H7：
+
+由其它外设对EXTI产生的事件分为可配置事件和直接事件。**见参考手册20.1**
+
+**AFIO简介F1**
+
+复用功能IO，用于重映射和外部中断映射配置。**见参考手册8.4.3**
+
+1. 调试IO配置 AFIO_MAPR[26:24]
+2. 重映射配置 AFIO_MAPR
+3. 外部中断配置 AFIO_EXTICR1\~4，配置EXTI中断线0\~15对应到哪个具体IO口
+
+- 配置AFIO寄存器之前要使能AFIO时钟 `__HAL_RCC_AFIO_CLK_ENABLE()`
+
+**SYSCFG（F4/F7/H7）**
+
+系统配置控制器，用于外部中断映射配置等
+
+外部中断配置 SYSCFG_EXTICR1\~4，配置EXTI中断线0\~15对应到哪个具体IO口。
+
+- 配置SYSCFG寄存器之前要使能SYSCFG时钟 `__HAL_RCC_SYSCFG_CLK_ENABLE()`
+
+**如何使用中断**
+
+<img src="https://raw.githubusercontent.com/pikapika-zrf/BlogImg/master/img/202306291748580.png" alt="image-20230629174828416" style="zoom:33%;" />
+
+**EXTI配置步骤（GPIO外部中断）**
+
+1. 使能GPIO时钟。
+2. 设置GPIO输入模式。上/下拉/浮空输入。
+3. 使能AFIO/SYSCFG时钟。设置AFIO/SYSCFG时钟开启寄存器。
+4. 设置EXTI和IO对应关系。AFIO_EXTICR/SYSCFG_EXTICR
+5. 设置EXTI屏蔽，触发方式。IMR、RTSR/FTSR
+6. 设置NVIC。设置优先级分组、设置优先级、使能中断。
+7. 设置中断服务函数。编写函数，清除中断标志。
+
+步骤2-5使用HAL_GPIO_Init一步到位
+
+**EXTI的HAL库配置步骤（GPIO外部中断）**
+
+1. 使能GPIO时钟。`__HAL_RCC_GPIOx_CLK_ENABLE`
+2. GPIO/AFIO(SYSCFG)/EXTI。`HAL_GPIO_Init`
+3. 设置中断分组。`HAL_NVIC_SetPriorityGrouping`
+4. 设置中断优先级。`HAL_NVIC_SetPriority`
+5. 使能中断。`HAL_NVIC_EnableIRQ`
+6. 设计中断服务函数。`EXTIx_IRQHandler`
+
+STM32仅有：EXTI0\~4（5个）、EXTI9\~5（1个）、EXTI15\~10（1个）。7个外部中断服务函数。
+
+**HAL库中断回调处理机制**
+
+中断服务函数->HAL库中断处理公用函数->HAL库数据处理回调函数
+
+### 3.4 串口
+
+#### 3.4.1 通信
+
+单工通信：数据只沿一个方向传输。
+
+半双工通信：数据可以沿两个方向传输，但需要分时进行。
+
+全双工通信：数据可以同时进行双向传输。
 
 
 
+同步通信：共用同一时钟信号。
+
+异步通信：没有时钟信号，通过在数据信号中加入起始位和停止位等同步信号。
 
 
 
+比特率：每秒传送的比特数。bit/s
 
+波特率：每秒传送的码元数。Baud
+
+比特率 = 波特率 * log2 M,M表示每个码元承载的信息量。
+
+二进制系统中，波特率数值上等于比特率。
+
+![image-20230629212617098](https://raw.githubusercontent.com/pikapika-zrf/BlogImg/master/img/202306292126368.png)
+
+#### 3.4.2 串口
+
+- 串口通信接口：指按位发送和接收的接口。RS-232/485。
+
+- RS-232接口（DB9）数据：
+
+  ​	TXD:串口数据输出   RXD:串口数据输入   GND
+
+**电平对比：**
+
+RS-232电平：逻辑1：-15V ~ -3V   逻辑0：+3V ~ +15V
+
+CMOS电平：逻辑1：3.3V   逻辑0：0V     STM32
+
+TTL电平：逻辑1：5V   逻辑0：0V
+
+RS-232电平不能与CMOS/TTL电平直接交换信息。
+
+电平转换芯片MAX3232/SP3232(3.3V)。MAX232(5V)
+
+**STM32串口与电脑USB通信**
+
+USB/串口转换电路（CH340C）
+
+**RS-232异步通信**
+
+1. 启动位。占1个位长，保持逻辑0电平。
+2. 有效数据位。可选5、6、7、8、9个位长，LSB在前，MSB在后。
+3. 奇偶校验位。可选1个位长，可以没有。
+4. 停止位。必须有，可选占0.5、1、1.5、2个位长，保持逻辑1电平。
+
+![image-20230629214426176](https://raw.githubusercontent.com/pikapika-zrf/BlogImg/master/img/202306292144264.png)
+
+#### 3.4.3 USART
+
+USART通用同步异步收发器。UART通用异步收发器。
+
+USART/UART都可以全双工异步通信。
+
+快速查看STM32外设的数量。查看ST MCU选型手册
+
+**设置USART波特率（F1）**
+
+波特率计算公式：$baud = \frac{f_{ck}}{16 * USARTDIV}$
+
+$USARTDIV = DIV\_Mantissa+(DIV\_Fraction / 16)$
+
+波特比例寄存器BRR
+
+例：波特率115200
+
+$115200 = \frac{72000000}{16 * USARTDIV}$，则USARTDIV算得$39.0625$
+
+```c
+uint16_t mantissa;
+uint16_t fraction;
+mantissa=39;
+fraction = 0.0625 * 16 + 0.5;//得到0X01。加0.5四舍五入
+USART1->BRR = (mantissa<<4)+fraction
+//USART1->BRR = USARTDIV * 16 + 0.5;
+//USART1->BRR = (f_ck + baud/2)/baud;
+```
+
+**USART寄存器**
+
+控制寄存器1（CR1）
 
 
 
