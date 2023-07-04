@@ -246,6 +246,8 @@ HAL库的用户配置文件`stm32f1xx_hal_conf.h`
 
 ## 三、STM32开发
 
+### 3.0 HAL库MDK工程
+
 ### 3.1 时钟树
 
 **配置函数：**
@@ -509,7 +511,7 @@ USB/串口转换电路（CH340C）
 
 ![image-20230629214426176](https://raw.githubusercontent.com/pikapika-zrf/BlogImg/master/img/202306292144264.png)
 
-#### 3.4.3 USART
+#### 3.4.3 STM32的USART
 
 USART通用同步异步收发器。UART通用异步收发器。
 
@@ -541,7 +543,131 @@ USART1->BRR = (mantissa<<4)+fraction
 
 **USART寄存器**
 
-控制寄存器1（CR1）
+控制寄存器1（CR1） 数据寄存器DR  状态寄存器SR
+
+#### 3.4.4 HAL库外设初始化MSP回调机制
+
+`HAL_PPP_Init()`调用MSP回调函数`HAL_PPP_MSPInit()`
+
+`HAL_PPP_MSPInit()`是空函数，__weak修饰，允许用户重新定义。
+
+**HAL库中断回调机制**
+
+用户在中断服务函数`PPP_IRQHandler()`里调用HAL库共用中断函数`HAL_PPP_IRQHandler()`
+
+再调用一系列中断回调函数`HAL_PPP_xxxCallback()`
+
+`HAL_PPP_xxxCallback()`是空函数，__weak修饰，允许用户重新定义。
+
+#### 3.4.5 USART/UART异步通信配置步骤
+
+1. 配置串口工作参数。`HAL_UART_Init()`
+2. 串口底层初始化。`HAL_UART_MspInit()`
+3. 开启串口异步接收中断。`HAL_UART_Receive_IT()`
+4. 设置优先级，使能中断。`HAL_NVIC_SetPriority()`、`HAL_NVIC_EnableIRQ()`
+5. 编写中断服务函数。`USARTx_IRQHandler()`、`UARTx_IRQHandler()`
+6. 串口数据发送。`USART_DR()`、`HAL_UART_Transmit()`
+
+### 3.5 IWDG
+
+独立看门狗，能产生系统复位信号的计数器。递减的计数器，时钟由独立的RC振荡器提供，计数到0时产生复位。
+
+喂狗。在计数器计数到0之前，重装载计数器的值，防止复位。
+
+**作用：**
+
+用于检测外部干扰或软硬件异常造成程序跑飞的问题。用于高稳定性且对时间精度要求较低的场景。IWDG是异常处理的最后手段，不可依赖。
+
+**寄存器：**
+
+键寄存器IWDG_KR。喂狗、解除PR与RLR寄存器写访问保护、启动看门狗工作。
+
+预分频器寄存器IWDG_PR。
+
+重装载寄存器IWDG_RLR。
+
+状态寄存器IWDG_SR。
+
+**寄存器配置操作步骤**
+
+1. IWDG_KR写入0xCCCC使能IWDG
+2. IWDG_KR写入0x5555使能寄存器访问
+3. 预分频器IWDG_PR配置预分频器
+4. 重载寄存器IWDG_RLR进行写操作
+5. 等待寄存器IWDG_SR更新(IWDG_SR = 0x0000 0000)
+6. 刷新计数器值为IWDG_RLR的值(IWDG_KR = 0xAAAA)
+
+**IWDG溢出时间计算**
+
+<img src="https://raw.githubusercontent.com/pikapika-zrf/BlogImg/master/img/202307041137550.png" alt="image-20230704113730440" style="zoom:33%;" />
+
+**IWDG配置步骤**
+
+1. HAL_IWDG_Init()。取消PR/RLR寄存器写保护，设置IWDG预分频系数和重装载值，启动IWDG。
+2. HAL_IWDG_Refresh()。喂狗，即写入0xAAAA到IWDG_KR
+
+### 3.6 WWDG
+
+窗口看门狗。能产生系统复位信号和提前唤醒中断的计数器。
+
+- 递减计数器，从0x40减到0x3F时复位（T6位跳变到0）。
+- 计数器的值大于W[6:0]值时喂狗会复位。
+- 提前唤醒中断（EWI）：当递减计数器等于0x40时可产生。
+
+喂狗：在窗口期内装载计数器的值，防止复位。
+
+作用：用于监测单片机程序运行时效是否精准，主要检测软件异常。
+
+**寄存器**
+
+控制寄存器WWDF_CR、配置寄存器WWDG_CFG、状态寄存器WWDG_SR
+
+**WWDG超时时间计算**
+
+<img src="https://raw.githubusercontent.com/pikapika-zrf/BlogImg/master/img/202307042253592.png" alt="image-20230704225332329" style="zoom:33%;" />
+
+WWDG配置步骤
+
+1. WWDG工作参数初始化。`HAL_WWDG_Init()`
+2. WWDG Msp初始化。`HAL_WWDG_MspInit()`
+3. 设置优先级，使能中断。`HAL_NVIC_SetPriority()`、`HAL_NVIC_Enable()`
+4. 编写中断服务函数。`WWDG_IRQHandler()`->`HAL_WWDG_IRQHandler()`
+5. 重定义提前唤醒回调函数。`HAL_WWDG_EarlyWakeupCallback()`
+6. 在窗口期内喂狗。`HAL_WWDG_Refresh()`
+
+`HAL_WWDG_Init()`。WWDG_CR/WWDG_CFR。使能WWDG，设置预分频系数和窗口值。
+
+`HAL_WWDG_Refresh()`。WWDG_CR重装载计数器（喂狗）
+
+**IWDG和WWDG的主要区别**
+
+<img src="https://raw.githubusercontent.com/pikapika-zrf/BlogImg/master/img/202307042305202.png" alt="image-20230704230550947" style="zoom:50%;" />
+
+## 3.5 定时器
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
