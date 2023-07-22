@@ -643,45 +643,623 @@ WWDG配置步骤
 
 <img src="https://raw.githubusercontent.com/pikapika-zrf/BlogImg/master/img/202307042305202.png" alt="image-20230704230550947" style="zoom:50%;" />
 
-## 3.5 定时器
+### 3.7 定时器
+
+**软件定时**
+
+使用纯软件（CPU死等）的方式实现（延时）功能。
+
+```c
+void delay_us(uint32_t us)
+{
+	us*=72;
+	while(us--);
+}
+```
+
+缺点：1.延时不精准。2.CPU死等。
+
+**定时器定时**
+
+使用精准的时基，通过硬件的方式，实现定时功能。定时器核心就是计数器。
+
+定时器分类：
+
+1. 常规定时器。基本定时器、通用定时器、高级定时器
+2. 专用定时器。独立看门狗、窗口看门狗、实时时钟、低功耗定时器
+3. 内核定时器。SysTick定时器
+
+#### 3.5.1 基本定时器
+
+TIM6/7。16位递增计数器。16位预分频器。可用于触发DAC。在更新时间（计数器溢出）时，可产生中断DMA请求。
+
+计数模式：
+
+1. 递增。CNT=ARR
+2. 递减。CNT=0
+3. 中心对齐模式。CNT=ARR-1、CNT=1
+
+**寄存器**
+
+1. 控制寄存器1。TIMx_CR1。 设置ARR寄存器是否具有缓冲、使能计数器。
+
+2. DMA/中断使能寄存器TIMx_DIER。使能更新中断。
+
+3. 状态寄存器TIMx_SR。判断是否发生了更新中断。硬件置1，软件清0。
+4. 计数器TIMx_CNT。计数器实时数值，可设置计数器初值，可读可写。
+5. 预分频器TIMx_PSC。设置预分频系数，实际预分频系数等于PSC+1。
+6. 自动重装载寄存器TIMx_ARR。设置自动重装载值。
+
+**定时器溢出时间计算方法**
+
+<img src="https://raw.githubusercontent.com/pikapika-zrf/BlogImg/master/img/202307051206116.png" alt="image-20230705120629249" style="zoom:33%;" />
+
+##### **基本定时器配置步骤：**
+
+1. 配置定时器基础工作参数。`HAL_TIM_Base_Init()`
+2. 定时器基础MSP初始化。`HAL_TIM_Base_MspInit()`
+3. 使能更新中断并启动计数器。`HAL_TIM_Base_Start_IT()`
+4. 设置优先级，使能中断。`HAL_NVIC_SetPriority()`、`HAL_NVIC_Enable()`
+5. 编写中断服务函数。`TIMx_IRQHandler()`->`HAL_TIM_IRQHandler()`
+6. 编写定时器更新中断回调函数。`HAL_TIM_PeriodElapsedCallback()`
+
+相关库函数介绍：
+
+1. `HAL_TIM_Base_Init()`。主要寄存器CR1、ARR、PSC。初始化定时器基础参数。
+2. `HAL_TIM_Base_MspInit()`。存放NVIC、CLOCK、GPIO初始化代码。
+3. `HAL_TIM_Base_Start_IT()`。DIER、CR1。使能更新中断并启动计数器。
+4. `HAL_TIM_IRQHandler()`。SR。定时器中断处理公用函数，处理各种中断。
+5. `HAL_TIM_PeriodElapsedCallback()`。定时器更新中断回调函数，由用户重定义。
+
+#### 3.5.2 通用定时器
+
+TIM2\3\4\5。16位递增、递减、中心对齐计数器。16位预分频器。可用于触发DAC、ADC。
+
+在更新时间、触发时间、输入捕获、输出比较时会产生中断/DMA请求。
+
+4个独立通道，可用于：输入捕获、输出比较、输出PWM、单脉冲模式。
+
+使用外部信号控制定时器且可实现多个定时器互连的同步电路。
+
+支持编码器和霍尔传感器电路。
+
+**时钟源**
+
+内部时钟、外部时钟模式1、外部时钟模式2、内部触发输入
+
+##### **通用定时器PWM输出配置步骤：**
+
+1. 配置定时器基础工作参数。`HAL_TIM_PWM_Init()`
+2. 定时器 PWM输出MSP初始化。`HAL_TIM_PWM_MspInit()`
+3. 配置PWM模式/比较值等。`HAL_TIM_PWM_ConfigChannel()`
+4. 使能输出并启动计数器。`HAL_TIM_PWM_Start()`
+5. 修改比较值控制占空比（可选）。`__HAL_TIM_SET_COMPARE()`
+
+6. 使能通道预装载（可选）。`__HAL_TIM_ENABLE_OCxPRELOAD()`
+
+相关库函数介绍：
+
+1. `HAL_TIM_PWM_Init()`。主要寄存器CR1、ARR、PSC。初始化定时器基础参数。
+2. `HAL_TIM_PWM_MspInit()`。存放NVIC、CLOCK、GPIO初始化代码。
+3. `HAL_TIM_PWM_ConfigChannel()`。CCMRx、CCRx、CCER。配置PWM模式、比较值、输出极性等。
+4. `HAL_TIM_PWM_Start()`。CCER、CR1。使能输出比较并启动计数器。
+5. `__HAL_TIM_SET_COMPARE()`。CCRx。修改比较值
+6. `__HAL_TIM_ENABLE_OCxPRELOAD()`。CCER。使能通道预装载。
+
+##### **通用定时器输入捕获配置步骤：**
+
+1. 配置定时器基础工作参数。`HAL_TIM_IC_Init()`
+2. 定时器输入捕获MSP初始化。`HAL_TIM_IC_MspInit()`
+3. 配置输入通道映射、捕获边沿。`HAL_TIM_IC_ConfigChannel()`
+4. 设置优先级，使能中断。`HAL_NVIC_SetPriority()`、`HAL_NVIC_Enable()`
+5. 使能定时器更新中断。`__HAL_TIM_ENABLE_IT()`
+6. 使能捕获、捕获中断及计数器。`HAL_TIM_IC_Start_IT()`
+
+6. 编写中断服务函数。`TIMx_IRQHandler()`->`HAL_TIM_IRQHandler()`
+7. 编写更新中断和捕获回调函数。`HAL_TIM_PeriodElapsedCallback()`,`HAL_TIM_IC_CaptureCallback()`
+
+相关库函数介绍：
+
+1. `HAL_TIM_IC_Init()`。主要寄存器CR1、ARR、PSC。初始化定时器基础参数。
+2. `HAL_TIM_IC_MspInit()`。存放NVIC、CLOCK、GPIO初始化代码。
+3. `HAL_TIM_IC_ConfigChannel()`。CCMRx、CCER。配置通道映射、捕获边沿、分频、滤波等。
+4. `__HAL_TIM_ENABLE_IT()`。DIER。使能更新中断。
+5. `HAL_TIM_IC_Start_IT()`。CCER、DIER、CR1。使能输入捕获、捕获中断并启动计数器。
+6. `HAL_TIM_IRQHandler()`。SR。定时器中断处理公用函数，处理各种中断。
+7. `HAL_TIM_PeriodElapsedCallback()`。定时器更新中断回调函数，由用户重定义。
+8. `HAL_TIM_IC_CaptureCallback()`。定时器输入捕获回调函数，由用户重定义。
+
+##### **通用定时器脉冲计数配置步骤：**
+
+1. 配置定时器基础工作参数。`HAL_TIM_IC_Init()`
+2. 定时器输入捕获MSP初始化。`HAL_TIM_IC_MspInit()`
+3. 配置定时器从模式。`HAL_TIM_SlaveConfigSynchro()`
+4. 使能输入捕获并启动计数器。`HAL_TIM_IC_Start()`
+5. 获取计数器的值。`__HAL_TIM_GET_COUNTER()`
+6. 设置计数器的值。`__HAL_TIM_SET_COUNTER()`
+
+相关库函数介绍：
+
+1. `HAL_TIM_IC_Init()`。主要寄存器CR1、ARR、PSC。初始化定时器基础参数。
+2. `HAL_TIM_IC_MspInit()`。存放NVIC、CLOCK、GPIO初始化代码。
+3. `HAL_TIM_SlaveConfigSynchro()`。SMCR、CCMRx、CCER。配置定时器从模式、触发选择、分频、滤波等。
+4. `HAL_TIM_IC_Start()`。CCER、CR1。使能输入捕获并启动计数器。
+
+#### 3.5.3 高级定时器
+
+TIM1/8。通用定时器+重复计数器、死区时间带编程的互补输出、断路输入。
+
+ **重复计数器**
+
+计数器每次溢出使重复计数器减1，再发生一次溢出就发生更新事件。即设置RCR为N，更新事件将在N+1次溢出时发生。
+
+**输出指定个数PWM实验**
+
+配置边沿对齐模式输出PWM。指定输出N个PWM。把N-1写入RCR。在更新中断内，关闭计数器。
+
+高级定时器通道输出必须把MOE位置1
+
+##### **输出指定个数PWM配置步骤：**
+
+1. 配置定时器基础工作参数。`HAL_TIM_PWM_Init()`
+2. 定时器 PWM输出MSP初始化。`HAL_TIM_PWM_MspInit()`
+3. 配置PWM模式/比较值等。`HAL_TIM_PWM_ConfigChannel()`
+4. 设置优先级，使能中断。`HAL_NVIC_SetPriority()`、`HAL_NVIC_Enable()`
+5. 使能定时器更新中断。`__HAL_TIM_ENABLE_IT()`
+6. 使能输出、主输出并启动计数器。`HAL_TIM_PWM_Start()`
+7. 编写中断服务函数。`TIMx_IRQHandler()`->`HAL_TIM_IRQHandler()`
+8. 编写更新中断回调函数。`HAL_TIM_PeriodElapsedCallback()`
+
+相关HAL库函数介绍：
+
+`HAL_TIM_GenerateEvent()`。主要寄存器EGR。通过软件产生事件。
+
+**输出比较模式**
+
+CNT=CCRx时，OCRxREF电平翻转。
+
+周期由ARR决定，占空比固定50%，相位由CCRx决定。
+
+##### **输出比较配置步骤：**
+
+1. 配置定时器基础工作参数。`HAL_TIM_OC_Init()`。CR1、ARR、PSC。
+2. 定时器输出捕获MSP初始化。`HAL_TIM_OC_MspInit()`。
+3. 配置输出比较模式。`HAL_TIM_OC_ConfigChannel()`。CCMRx、CCRx、CCER。
+4. 使能通道预装载。`__HAL_TIM_ENABLE_OCxPRELOAD()`。CCMRx。
+5. 使能输出、主输出及计数器。`HAL_TIM_OC_Start()`。CR1、CCER、BDTR。
+6. 修改捕获/比较寄存器的值。`__HAL_TIM_SET_COMPARE()`。CCRx。
+
+**互补输出带死区**
+
+死区时间计算：
+
+1. 确定$t_{DTS}$的值$f_{DTS} = \frac{F_t}{2^{CKD[1:0]}}$
+2. 判断DTG[7:5]，选择计算公式。
+
+使能刹车功能：将TIM_BDTR的BKE位置一，刹车输入信号极性由BKP位位置。
+
+使能刹车功能后，由TIMx_BDTR的MOE、OSSI、OSSR位，TIMx_CR2的OISx、OISxN位，TIMx_CCER的CCxE、CCxNE位控制OCx和OCxN输出状态。**见参考手册13.4.9表75**
+
+发生刹车后：
+
+1. MOE位被清零，OCx和OCxN为无效、空闲或复位状态（OSSI位选择）
+2. OCx和OCxN的状态由相关控制位状态决定。
+3. BIF位置1，会产生刹车中断。使能TDE位，会产生DMA请求。
+4. 如果AOE位置1，在下一个更新事件UEV时，MOE位被自动置1。
+
+**互补输出带死区控制配置步骤：**
+
+1. 配置定时器基础工作参数。`HAL_TIM_PWM_Init()`。CR1、ARR、PSC。
+2. 定时器 PWM输出MSP初始化。`HAL_TIM_PWM_MspInit()`。
+3. 配置PWM模式/比较值等。`HAL_TIM_PWM_ConfigChannel()`。CCMRx、CCRx、CCER。
+4. 设置刹车功能、死区时间。`HAL_TIMEx_ConfigBreakDeadTime()`。BDTR。
+5. 使能输出、主输出并启动计数器。`HAL_TIM_PWM_Start()`。CCER、CR1。
+6. 使能互补输出、主输出并启动计数器。`HAL_TIMEx_PWMN_Start()`。CCER、CR1。
+
+**PWM输入模式**
+
+1. 配置定时器基础工作参数。`HAL_TIM_IC_Init()`
+2. 定时器输入捕获MSP初始化。`HAL_TIM_IC_MspInit()`
+3. 配置IC1/2映射、捕获边沿等。`HAL_TIM_IC_ConfigChannel()`
+4. 配置从模式，触发源。`HAL_TIM_SlaveConfigSynchro()`
+5. 设置优先级，使能中断。`HAL_NVIC_SetPriority()`、`HAL_NVIC_Enable()`
+6. 使能输入捕获、捕获中断并启动计数器。`HAL_TIM_IC_Start_IT()`、`HAL_TIM_IC_Start()`
+7. 编写中断服务函数。`TIMx_IRQHandler()`->`HAL_TIM_IRQHandler()`
+8. 编写输入捕获回调函数。`HAL_TIM_IC_CaptureCallback()`
+
+### 3.8 USMART
+
+正点原子串口调试组件，提高代码调试效率。USMART可以直接通过串口调用用户编写的函数，修改参数。
+
+通过对比用户输入字符串和本地函数名，用函数指针实现调用不同的函数。
+
+### 3.9 RTC实验
+
+实时时钟，计数器，计数频率常为秒。有后备电源$V_{BAT}$。
+
+普通定时器无法掉电运行。RTC能提供秒钟数、能在MCU掉电后运行、低功耗。
+
+RTC和后备寄存器不会被系统或电源复位源复位。`RTC_RPL`、`RTC_ALR`、`RTC_CNT`、`RTC_DIV`寄存器不会被系统复位。
+
+**基本配置：**
+
+1. 使能对RTC的访问。使能PWR&BKP时钟，使能对后备寄存器和RTC的访问权限。`RCC_APB1ENB`（位27，位28），`PWR_CR`（位8）
+2. 设置RTC时钟源。激活LSE，设置RTC的技术时钟源为LSE。`RCC_BDCR`（位15，位9:8，位0）
+3. 进入配置模式。等待RTOFF位为1，设置CNF位为1。`RTC_CRL`（位5，位4），`RTC_CRH`
+4. 设置RTC寄存器。设置分频器、计数值等，一般先只设置分频值，CNT的设置独立。`RTC_PRL`，`RTC_CNT`
+5. 退出配置模式。清除CNF位，等待RTOFF为1即配置完成。`RTC_CRL`
+
+相关HAL库驱动介绍
+
+1. `HAL_RTC_Init()`。初始化RTC。
+2. `HAL_RTC_MspInit()`。使能RTC时钟。
+3. `HAL_RCC_OscConfig()`。开启LSE时钟源。
+4. `HAL_RCCEx_PeriphCLKConfig()`。设置RTC时钟源为LSE。
+5. `HAL_PWR_EnableBkUpAccess()`。使能备份域的访问权限。
+6. `HAL_RTCEx_BKUPWrite/Read()`。读/写备份域数据寄存器。
+
+**RTC基本驱动步骤（F1）：**
+
+1. 使能电源时钟并使能后备域访问。使能电源时钟`__HAL_RCC_PWR_CLK_ENABLE()`，使能备份时钟`__HAL_RCC_BKP_CLK_ENABLE()`，使能备份访问。
+2. 开启LSE/选择RTC时钟源/使能RTC时钟。开启LSE时钟源`HAL_RCC_OscConfig()`，选择RTC时钟源`HAL_RCCEx_PeriphCLKConfig()`，使能RTC时钟`__HAL_RCC_RTC_ENABLE()`。
+3. 初始化RTC，设置分频置以及工作参数。初始化RTC`HAL_RTC_Init()`，完成RTC底层初始化`HAL_RTC_MspInit()`
+4. 设置RTC的日期和时间。操作寄存器方式实现`rtc_set_time`。
+5. 获取RTC当前日期和时间。定义rtc_get_time函数。
+
+### 3.10 RNG
+
+随机数发生器，用于生成随机数的程序或硬件。STM32 RNG处理器是以连续模拟噪声为基础的随机数发生器，在主机读数时提供一个32位的随机数。
+
+真随机数TRNG，参考选型手册。F1只有伪随机数。
+
+相关HAL库驱动介绍
+
+1. `HAL_RNG_Init()`。初始化RNG。`RNG_CR`
+2. `HAL_RNG_MspInit()`。使能时钟、外设、选择时钟源。
+3. `HAL_RCCEx_PeriphCLKConfig()`。设置RNG时钟源为PLL。`RCC_BDCR`
+4. `HAL_RNG_GenerateRandomNumber()`。判断DRDY位并读取随机数。`RNG_DR`
+5. `__HAL_RCC_RNG_CLK_ENABLE()`。使能RNG时钟。`AHB2ENR`
+6. `__HAL_RNG_GET_FLAG()`。获取RNG相关标记。`RNG_SR`
+
+**RNG基本驱动步骤：**
+
+1. 使能RNG时钟。`__HAL_RCC_RNG_CLK_ENABLE()`
+2. 初始化随机数发生器。`HAL_RNG_Init()`，`HAL_RNG_MspInit()`，`HAL_RCCEx_PeriphCLKConfig()`
+3. 判断DRDY位，读取随机数值。`HAL_RNG_GenerateRandomNumber()`
+
+### 3.11 低功耗
+
+STM32具有运行、睡眠、停止和待机四种工作模式。
+
+低功耗模式：睡眠、停止、待机
+
+相关HAL库驱动介绍
+
+1. `HAL_PWR_EnterSLEEPMode()`。进入睡眠模式。`SCB_SCR`
+2. `HAL_PWR_EnterSTOPMode()`。进入停止模式。`PWR_CR`、`SCB_SCR`
+3. `HAL_PWR_EnterSTANDBYMode()`。进入待机模式。`PWR_CR`、`SCB_SCR`
+4. `HAL_PWR_EnterWakeMode()`。使能WKUP管脚唤醒功能。`PWR_CR`。
+5. `__HAL_PWR_CAEAR_FLAG()`。清除PWR的相关标记。`PWR_CR`
+6. `__HAL_RCC_PWR_CLK_ENABLE()`。使能电源时钟。`PWR_CR`
+
+**睡眠模式配置步骤**
+
+1. 初始化WKUP为中断触发源。（外设低功耗处理）
+2. 进入睡眠模式。`HAL_PWR_EnterSLEEPMode()`
+3. 等待WKUP外部中断唤醒。
+
+**停止模式配置步骤**
+
+1. 初始化WKUP为中断触发源。（外设低功耗处理）
+2. 进入停止模式。`HAL_PWR_EnterSTOPMode()`
+3. 等待WKUP外部中断唤醒。重新设置时钟、重新选择滴答时钟源、使能systick中断。
+
+**待机模式配置步骤**
+
+1. 初始化WKUP为中断触发源。（外设低功耗处理）
+2. 使能电源时钟。`__HAL_RCC_PWR_CLK_Enable()`
+3. 使能WKUP的唤醒功能。`HAL_PWR_EnableWakeUpPin()`
+4. 清除唤醒标记WUF。`__HAL_PWR_CLEAR_FLAG`。
+5. 进入待机模式。`HAL_PWR_EnterSTANDBYMode`
+
+### 3.12 DMA
+
+直接存储器访问。无需CPU直接控制传输，通过硬件为RAM和IO设备开辟一条直接传输数据的通道，提高CPU的效率。
+
+相关HAL库驱动介绍
+
+1. `__HAL_RCC_DMAx_CLK_ENABLE()`。使能DMAx时钟。`RCC_AHBENR`。
+2. `HAL_DMA_Init()`。初始化DMA。`DMA_CCR`。
+3. `HAL_DMA_Start_IT()`。开始DMA传输。`DMA_CCR/CPAR/CMAR/CNDTR`。
+4. `__HAL_LINKDMA()`。用来连接DMA和外设句柄。
+5. `HAL_UART_Transmit_DMA()`。使能DMA发送，启动传输。`DMA_CCR/CPAR/CMAR/CNDTR/USART_CR3`。
+6. `__HAL_DMA_GET_FLAG()`。查询DMA传输通道的状态。`DMA_ISR`。
+7. `__HAL_DMA_ENABLE()`。使能DMA外设。`DMA_CCR`。
+8. `__HAL_DMA_DISABLE()`。使能DMA外设。`DMA_CCR`。
+
+**DMA方式传输串口数据配置步骤**
+
+1. 使能DMA时钟。`__HAL_RCC_DMA1_CLK_ENABLE`
+2. 初始化DMA。`HAL_DMA_Init`函数初始化DMA相关参数，`__HAL_LINKDMA`函数连接DMA和外设
+3. 使能串口的DMA发送，启动传输。`HAL_UART_Transmit_DMA`
+
+查询DMA传输状态。`__HAL_DMA_GET_FLAG`查询通道传输状态，`__HAL_DMA_GET_COUNTER`获取当前传输剩余数据量
+
+DMA中断使用。`HAL_NVIC_EnableIRQ
+`HAL_NVIc SetPriority`，编写中断服务函数xxx_IRQHandler
+
+### 3.13 ADC
+
+模拟/数字转换器。分为并联比较型（速度快）和逐次逼近型（功耗低）。
+
+- 分辨率。ADC能辨别的最小模拟量，用二进制位数表示。
+- 转换时间。完成一次AD转换所需要的时间。转换时间越短，采样率越高。
+- 精度。最小精度基础上叠加各种误差参数。精度受ADC性能、温度和气压等影响。
+- 量化误差。用数字量近似表示模拟量，采用四舍五入原则产生的误差。
+
+ADC供电电源。$V_{SSA}$接0V、$V_{DDA}$接3.3V通过低通滤波器。
+
+ADC输入电压范围$V_{REF-}<=V_{IN}<=V_{REF+}$($0V<=V_{IN}<=3.3V$)
+
+#### **1.触发源（F1）**
+
+1. ADON位触发转换（F1）
+
+当ADC_CR2寄存器的ADON位为1时，再单独给ADON位写1，只能启动规则组转换。
+
+2. 外部事件触发转换
+
+分为：规则组外部触发和注入组外部触发。
+
+**规则组外部触发方法：**
+
+`EXTTRIG位置1`（使能外部事件触发）的情况下：
+
+​		`EXTSEL[2:0]=111`。选择软件启动    》  `SWSTART位置1`。启动规则通道转换。
+
+​		`EXTSEL[2:0]=其它`。选择硬件启动   》  `等待相关事件发生`。启动规则通道转换。
+
+**注入组外部触发方法：**
+
+`JEXTTRIG位置1`（使能外部事件触发）的情况下：
+
+​		`JEXTSEL[2:0]=111`。选择软件启动    》  `JSWSTART位置1`。启动注入通道转换。
+
+​		`JEXTSEL[2:0]=其它`。选择硬件启动   》  `等待相关事件发生`。启动注入通道转换。
+
+#### **2.转换时间**
+
+PCLK2。APB总线上的时钟-》
+
+ADCPRE[1:0]。RCC_CFGR寄存器-》
+
+ADCCLK。ADC最大时钟频率为14MHz。
+
+ADC转换时间：$T_{CONV}$=采样时间+12.5个周期
+
+采样时间通过SMPx[2:0]设置。
+
+#### **3.数据寄存器**
+
+规则组。转换结果按顺序输出。规则数据寄存器（32位）ADCx_DR
+
+注入组。对应四个寄存器。注入数据寄存器（16位）ADCx_JDRy
+
+分辨率是8/10/12位。由ADCx_CR2寄存器的ALIGN位设置数据对齐方式，可选择：右对齐或者左对齐。
+
+#### 4.中断
+
+规则通道转换结束、 注入通道转换结束、设置了模拟看门狗状态位、
+溢出(F1没有)
+
+**DMA请求(只适用于规则组)**
+规则组每个通道转换结束后，除了可以产生中断外，还可以产生DMA请求,我们利用DMA及时把转换好的数据传输到指定的内存里，防止数据被覆盖。
+
+#### **5.单次转换模式和连续转换模式**
+
+CONT位选择转换模式。
+
+单次转换模式(只触发一次转换)
+
+- 规则组。转换结果被储存在ADC_DR。EOC(转换结束)标志位被置1。如果设置了EOCIE位，则产生中断。然后ADC停止。
+- 注入组。转换结果被储存在ADC_DRJx。JEOC(转换结束)标志位被置1。如果设置了JEOCIE位，则产生中断。然后ADC停止
+
+连续转换模式(自动触发下一次转换）
+
+- 规则组。转换结果被储存在ADC_DR。EOC(转换结束)标志位被置1。如果设置了EOCIE位，则产生中断。
+- 注入组。转换结果被储存在ADC_DRJx。JEOC(转换结束)标志位被置1。如果设置了JEOCIE位，则产生中断。自动注入:将JAUTO位置1
+
+**扫描模式**
+
+SCAN位。
+
+- 关闭扫描模式。ADC只转换ADC_SQRx或ADC_JSQR选中的第一个通道进行转换。
+- 使用扫描模式。ADC会扫描所有被ADC_SQRx或ADC_JSQR选中的所有通道
+
+**不同模式组合**
+
+- 单次转换模式(不扫描)。只转换一个通道,而且是一次，需等待下一次触发
+- 单次转换模式(扫描)。ADC_SQRx和ADC_JSQR选中的所有通道都转换一次
+- 连续转换模式(不扫描)。只会转换一个通道,转换完后会自动执行下一次转换
+- 连续转换模式(扫描)。ADC SORx和ADC_JSQR选中的所有通道都转换一次，并自动进入下—轮转换
+
+不常用的模式：间断模式。
+
+**单通道ADC实验**
+
+寄存器ADC_CR1（位8、位19:16）、ADC_CR2（位22、位20、位19:17、11、8、3、2、1、0）、ADC_SMPR1/2、ADC_SQR1
+
+**单通道ADC采集实验配置步骤**
+
+1. 配置ADC工作参数、ADC校准。`HAL_ADC_Init()`、`HAL_ADCEx_Calibration_Start()`
+2. ADC MSP初始化。`HAL_ADC_MspInit()` 配置NVIC、CLOCK、GPIO等
+3. 配置ADC相应通道相关参数。`HAL_ADC_ConfigChannel()`
+4. 启动A/D转换。`HAL_ADC_Start()`
+5. 等待规则通道转换完成。`HAL_ADC_PollForConversion()`
+6. 获取规则通道A/D转换结果。`HAL_ADC_GetValue()`
+
+相关HAL库函数介绍：
+
+1. `HAL_ADC_Init()`。CR1、CR2。配置ADC工作参数
+2. `HAL_ADCEx_Calibration_Start()`。CR2。ADC校准
+3. `HAL_ADC_MspInit()`。无。存放NVIC、CLOCK、GPIO初始化代码
+4. `HAL_RCCEx_PeriphCLKConfig()`。RCC_CFGR。设置扩展外设时钟，如:ADC、RTC等
+5. `HAL_ADC_ConfigChannel()`。SQRx、SMPRx。配置ADC相应通道的相关参数
+6. `HAL_ADC_Start()`。CR2。启动A/D转换
+7. `HAL_ADC_PollForConversion()`。SR。等待规则通道转换完成
+8. `HAL_ADC_GetValue()`。DR。获取规则通道A/D转换结果
+
+**单通道ADC采集（DMA处理）实验配置步骤**
+
+1. 初始化DMA。`HAL_DMA_Init()`
+2. 将DMA和ADC句柄联系起来。`__HAL_LINKDMA()`
+3. 配置ADC工作参数、ADC校准。`HAL_ADC_Init()`、`HAL_ADCEx_Calibration_Start()`
+4. ADC MSP初始化。`HAL_ADC_MspInit()` 配置NVIC、CLOCK、GPIO等
+5. 配置ADC相应通道相关参数。`HAL_ADC_ConfigChannel()`
+6. 使能DMA数据流传输完成中断。`HAL_NVIC_SetPriority()`、`HAL_NVIC_EnableIRQ()`
+7. 编写DMA数据流中断服务函数。`DMAx_Channely_lRQHandler()`
+8. 启动DMA，开启传输完成中断。`HAL_DMA_Start_IT()`
+9. 触发ADC转换，DMA传输数据。`HAL_ADC_Start_DMA()`
+10. 等待规则通道转换完成。`HAL_ADC_PollForConversion()`
+11. 获取规则通道A/D转换结果。`HAL_ADC_GetValue()`
+
+相关HAL库函数介绍：
+
+1. `HAL_DMA_Start_IT()`。CCRx。启动DMA、开启传输完成中断。
+2. `HAL_ADC_Start_DMA()`。CR2。触发ADC转换、使用DMA传输数据。
+
+实验：多通道ADC采集（DMA）、单通道ADC过采样、内部温度传感器、光敏传感器、
+
+### 3.14 DAC
+
+数字/模拟转换器。
+
+- 分辨率表示模拟电压的最小增量，常用二进制位数表示，比如:8、12位等
+
+- 建立时间。表示将一个数字量转换为稳定模拟信号所需的时间
+
+- 精度。转换器实际特性曲线与理想特性曲线之间的最大偏差
+
+  误差源:比例系统误差、失调误差、非线性误差
+
+  原因:元件参数误差、基准电压不稳定、运算放大器零漂等
+
+$V_{SSA}$∶0V，$V_{DDA}$∶2.4V~3.6V
+
+$V_{REF\_}$: 0V，$V_{REF+}$—般为3.3V
+
+DAC输出电压范围：$V_{REF-}\leq V_{OUT}\leq V_{REF+}$
+
+**DAC数据模式**
+
+支持8/12位模式。
+
+8位模式。只能右对齐。DHR8Rx、DHR8RD（双DAC通道转换用）
+
+12位寄存器。右对齐。DHR12Rx、DHR12RD（双DAC通道转换用）。左对齐。DHR12Lx、DHR12LD（双DAC通道转换用）
+
+**触发源**
+
+自动触发、软件触发、外部时间触发
+
+TENx位置0，禁止触发，即自动。经过1个APB1时间周期，DHRx->DORx
+
+ TENx位置1，使能触发。$TSELx[2:0] \neq 111$，外部事件触发。经过3个APB1时钟周期，DHRx->DORx
+
+​	$TSELx[2:0] = 111$，软件触发。经过1个APB1时钟周期，DHRx->DORx
+
+DHRx数据加载到DORx后，模拟输出电压将经过时间$V_{SETTING}$后可用。
+
+**DMA请求**
+
+DAMENx位置1，通过外部事件触发产生DMA请求，DHRx->DORx。
+
+**DAC输出电压**
+
+12位模式下，$DAC输出电压 = (\frac {DORx} {4096}) * V_{REF+}$
+
+8位模式下，$DAC输出电压 = (\frac {DORx} {256}) * V_{REF+}$
+
+#### DAC输出实验
+
+关闭通道1触发（即自动），TEN1位置0。
+
+关闭输出缓冲，BOFF1位置1。
+
+使用12位右对齐模式，将数字量写入DAC_DHR12R1寄存器。
+
+**DAC输出实验配置步骤**
+
+1. 初始化DAC。`HAL_DAC_Init()`、
+2. DAC MSP初始化。`HAL_DAC_MspInit()` 配置NVIC、CLOCK、GPIO等配置
+3. 配置DAC相应通道相关参数。`HAL_DAC_ConfigChannel()`
+4. 启动DA转换。`HAL_DAC_Start()`
+5. 设置输出数字量。`HAL_DAC_SetValue()`
+6. 读取通道输出数字量（可选）。`HAL_DAC_GetValue()`
+
+相关HAL库函数介绍：
+
+1. `HAL_DAC_Init()`。无。配置DAC工作状态（HAL库内部使用）
+2. `HAL_DAC_MspInit()`。无。存放NVIC、CLOCK、GPIO初始化代码
+3. `HAL_DAC_ConfigChannel()`。CR。配置DAC相应通道的相关参数
+4. `HAL_DAC_Start()`。CR、SWTRIGR。启动D/A转换
+5. `HAL_DAC_SetValue()`。DHR12Rx。设置输出数字量
+6. `HAL_DAC_GetValue()`。DORx。读取通道输出数字量
+
+ DAC输出三角波实验、 DAC输出正弦波实验、PWM DAC实验
+
+### 3.15 IIC
+
+IIC总线协议，集成电路总线，同步串行半双工通信总线。
+
+- 两根双向信号线。时钟线SCL和数据线SDA。都接上拉电阻，总线空闲时为高电平.
+- 总线上可以挂多个主机，多个从机，每个设备都有一个唯一的地址。
+
+起始信号(S)：当SCL为高电平时，SDA从高电平变为低电平
+
+停止信号(P)：当SCL为高电平时，SDA从低电平变为高电平
+应答信号：上拉电阻影响下SDA默认为高，从而都拉低SDA就是确认收到数据即
+
+数据先发送高位，以字节传输。
+
+**在数据的传输过程中，SCLK为高电平时，外设模块开始采集SDA数据线上的数据，此时要求SDA数据线上的电平状态必须稳定，当SCLK为低电平时才允许SDA线上的数据跳变成另外一种状态。**
+
+**协议规定，主机每传完一个字节的数据即外设每收到一个字节的数据，外设就要在第9个时钟脉冲到来的时候，将SDA数据线拉低进行应答（ACK）,且必须是稳定的低电平，表示已经收到了一个字节的数据，拉高表示不进行应答（NACK）**；注意这里是外设将SDA数据线拉低，不是主机了
+
+**IIC配置步骤**
+
+1. 使能SCL和SDA对应时钟。`__HAL_RCC_GPIOB_CLK_ENABLE()`
+2. 设置GPIO工作模式。SDA开漏/SCL推挽输出模式，使用`HAL_GPIO_Init`初始化。
+3. 编写基本信号。起始信号、停止信号、应答信号。
+4. 编写读和写函数
+
+### 3.16 SPI
+
+串行外设设备接口。高速、全双工、同步的通信总线。
+
+主设备控制从设备。通过片选控制多个从设备。时钟由主设备提供给从设备。
+
+时钟极性和时钟相位控制两个SPI设备数据采用和交换。
+
+每次SPI是主从设备在交换数据。发一个数据必然会收到一个数据；要收一个数据必须也要先发一个数据。
+
+### 3.17 CAN
+
+控制器局域网。有低速CAN和高速CAN。
+
+CAN也使用差分信号传输数据。CAN总线使用CAN_H和CAN_L的电位差来表示数据电平。电位差分为显性电平和隐性电平，分别表示逻辑0和1。
+
+CAN是一种基于消息广播模式的串行通信总线，即在同一时刻网络上所有节点监测到的数据是一致的，各节点根据报文ID来甄别是否是发给自己的报文。
+
+CAN总线以“帧”（Frame）的形式进行通信。
+
+为保证通信稳定，CAN采用“位同步”机制，实现对电平的正确采样。
+
+筛选器实现选择性的获取报文，降低系统负担。
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-Tips：
-
-1. 
+1. Tips：
 
 ```c
 //给位6置一
@@ -693,12 +1271,6 @@ temp ^= 1<<6
 ```
 
 2. 使用do{...}while(0)构造宏定义
-
-
-
-
-
-
 
 
 
